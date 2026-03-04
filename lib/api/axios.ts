@@ -12,7 +12,7 @@ export function setAuthToken(token: string | null) {
 // 60 s to spin up after a period of inactivity (cold-start).  We set the
 // timeout high enough to survive that warm-up without failing the request.
 const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_PERRY_API_BASE_URL,
+  baseURL: process.env.NEXT_PUBLIC_PERRY_API_BASE_URL || "https://node-backend-starter.onrender.com",
   timeout: 60000, // 60 s — accommodates Render free-tier cold starts
   withCredentials: true,
   headers: {
