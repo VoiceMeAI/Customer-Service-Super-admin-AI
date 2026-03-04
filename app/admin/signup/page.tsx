@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { register, type RegisterPayload } from "@/lib/api/auth";
+import { register } from "@/lib/api/auth";
+import type { RegisterPayload } from "@/lib/api/types";
 
 const steps = [
   { id: 1, name: "Personal Info" },

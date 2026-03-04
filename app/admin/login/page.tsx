@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { login, type LoginPayload } from "@/lib/api/auth";
+import { login } from "@/lib/api/auth";
+import type { LoginPayload } from "@/lib/api/types";
 
 export default function LoginPage() {
   const router = useRouter();
