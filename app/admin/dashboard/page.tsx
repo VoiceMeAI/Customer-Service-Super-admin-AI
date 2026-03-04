@@ -4,7 +4,8 @@ import { AdminLayout } from "@/components/admin-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { MessageSquare, CheckCircle, AlertTriangle, TrendingUp, Plus, Settings, Users } from "lucide-react"
+import { MessageSquare, CheckCircle, AlertTriangle, TrendingUp, Plus, Settings, Users, User, Mail, Phone } from "lucide-react"
+import { useAuthStore } from "@/lib/stores/auth-store"
 
 const stats = [
   { name: "Total Chats", value: "1,284", change: "+12%", icon: MessageSquare, color: "bg-blue-500" },
@@ -28,9 +29,82 @@ const quickActions = [
 ]
 
 export default function DashboardPage() {
+  const { user } = useAuthStore();
+
+  // Get user initials for avatar
+  const getUserInitials = () => {
+    if (user?.firstName && user?.lastName) {
+      return `${user.firstName[0]}${user.lastName[0]}`.toUpperCase();
+    }
+    if (user?.email) {
+      return user.email[0].toUpperCase();
+    }
+    return "U";
+  };
+
   return (
     <AdminLayout title="Dashboard">
       <div className="space-y-6">
+        {/* User Info Card */}
+        {user && (
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle>Welcome back!</CardTitle>
+              <CardDescription>Your account information</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-start gap-6">
+                <Avatar className="h-20 w-20">
+                  <AvatarImage src={`/diverse-user-avatars.png`} />
+                  <AvatarFallback className="text-lg">{getUserInitials()}</AvatarFallback>
+                </Avatar>
+                <div className="flex-1 space-y-4">
+                  <div>
+                    <h3 className="text-xl font-semibold text-foreground">
+                      {user.firstName && user.lastName
+                        ? `${user.firstName} ${user.lastName}`
+                        : user.name || user.email}
+                    </h3>
+                    {user.username && (
+                      <p className="text-sm text-muted-foreground">@{user.username}</p>
+                    )}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {user.email && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <Mail className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-muted-foreground">Email:</span>
+                        <span className="font-medium text-foreground">{user.email}</span>
+                      </div>
+                    )}
+                    {user.phone && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <Phone className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-muted-foreground">Phone:</span>
+                        <span className="font-medium text-foreground">{user.phone}</span>
+                      </div>
+                    )}
+                    {user.role && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <User className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-muted-foreground">Role:</span>
+                        <span className="font-medium text-foreground capitalize">{user.role}</span>
+                      </div>
+                    )}
+                    {user.businessName && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <Settings className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-muted-foreground">Business:</span>
+                        <span className="font-medium text-foreground">{user.businessName}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Stats Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {stats.map((stat) => (

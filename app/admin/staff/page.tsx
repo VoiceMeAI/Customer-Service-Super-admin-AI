@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Pagination } from "@/components/ui/pagination"
 import { Search, MoreHorizontal, Pencil, Trash2, Mail, UserPlus } from "lucide-react"
 
 const mockStaff = [
@@ -36,6 +37,8 @@ export default function StaffPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedRole, setSelectedRole] = useState("All")
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   const filteredStaff = staff.filter((member) => {
     const matchesSearch =
@@ -44,6 +47,9 @@ export default function StaffPage() {
     const matchesRole = selectedRole === "All" || member.role === selectedRole
     return matchesSearch && matchesRole
   })
+
+  const totalPages = Math.ceil(filteredStaff.length / pageSize)
+  const paginatedStaff = filteredStaff.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   const handleDelete = (id: number) => {
     setStaff(staff.filter((s) => s.id !== id))
@@ -134,11 +140,20 @@ export default function StaffPage() {
                 <Input
                   placeholder="Search by name or email..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value)
+                    setCurrentPage(1) // Reset to first page on search
+                  }}
                   className="rounded-xl pl-10"
                 />
               </div>
-              <Select value={selectedRole} onValueChange={setSelectedRole}>
+              <Select
+                value={selectedRole}
+                onValueChange={(value) => {
+                  setSelectedRole(value)
+                  setCurrentPage(1) // Reset to first page on filter change
+                }}
+              >
                 <SelectTrigger className="w-full rounded-xl sm:w-40">
                   <SelectValue />
                 </SelectTrigger>
@@ -169,7 +184,14 @@ export default function StaffPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredStaff.map((member) => (
+                  {paginatedStaff.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                        No staff members found.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedStaff.map((member) => (
                     <tr key={member.id} className="bg-card hover:bg-muted/30 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -219,10 +241,25 @@ export default function StaffPage() {
                         </DropdownMenu>
                       </td>
                     </tr>
-                  ))}
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
+            {/* Pagination */}
+            {filteredStaff.length > 0 && (
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                totalItems={filteredStaff.length}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={(size) => {
+                  setPageSize(size)
+                  setCurrentPage(1)
+                }}
+              />
+            )}
           </CardContent>
         </Card>
       </div>

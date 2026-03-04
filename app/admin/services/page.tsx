@@ -19,6 +19,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Pagination } from "@/components/ui/pagination"
 import { Plus, Search, MoreHorizontal, Pencil, Trash2, Briefcase } from "lucide-react"
 
 const mockServices = [
@@ -79,12 +80,17 @@ export default function ServicesPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedType, setSelectedType] = useState("All")
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   const filteredServices = services.filter((service) => {
     const matchesSearch = service.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesType = selectedType === "All" || service.type === selectedType
     return matchesSearch && matchesType
   })
+
+  const totalPages = Math.ceil(filteredServices.length / pageSize)
+  const paginatedServices = filteredServices.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   const toggleActive = (id: number) => {
     setServices(services.map((s) => (s.id === id ? { ...s, active: !s.active } : s)))
@@ -169,11 +175,20 @@ export default function ServicesPage() {
                 <Input
                   placeholder="Search services..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value)
+                    setCurrentPage(1) // Reset to first page on search
+                  }}
                   className="rounded-xl pl-10"
                 />
               </div>
-              <Select value={selectedType} onValueChange={setSelectedType}>
+              <Select
+                value={selectedType}
+                onValueChange={(value) => {
+                  setSelectedType(value)
+                  setCurrentPage(1) // Reset to first page on filter change
+                }}
+              >
                 <SelectTrigger className="w-full rounded-xl sm:w-48">
                   <SelectValue />
                 </SelectTrigger>
@@ -204,7 +219,14 @@ export default function ServicesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredServices.map((service) => (
+                  {paginatedServices.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                        No services found.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedServices.map((service) => (
                     <tr key={service.id} className="bg-card hover:bg-muted/30 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -246,10 +268,25 @@ export default function ServicesPage() {
                         </DropdownMenu>
                       </td>
                     </tr>
-                  ))}
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
+            {/* Pagination */}
+            {filteredServices.length > 0 && (
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                totalItems={filteredServices.length}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={(size) => {
+                  setPageSize(size)
+                  setCurrentPage(1)
+                }}
+              />
+            )}
           </CardContent>
         </Card>
       </div>

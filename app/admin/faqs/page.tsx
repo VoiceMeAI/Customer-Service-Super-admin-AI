@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Pagination } from "@/components/ui/pagination"
 import { Plus, Search, MoreHorizontal, Pencil, Trash2, HelpCircle } from "lucide-react"
 
 const mockFaqs = [
@@ -72,12 +73,17 @@ export default function FaqsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("All")
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   const filteredFaqs = faqs.filter((faq) => {
     const matchesSearch = faq.question.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesCategory = selectedCategory === "All" || faq.category === selectedCategory
     return matchesSearch && matchesCategory
   })
+
+  const totalPages = Math.ceil(filteredFaqs.length / pageSize)
+  const paginatedFaqs = filteredFaqs.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   const handleDelete = (id: number) => {
     setFaqs(faqs.filter((faq) => faq.id !== id))
@@ -152,11 +158,20 @@ export default function FaqsPage() {
                 <Input
                   placeholder="Search FAQs..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value)
+                    setCurrentPage(1) // Reset to first page on search
+                  }}
                   className="rounded-xl pl-10"
                 />
               </div>
-              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+              <Select
+                value={selectedCategory}
+                onValueChange={(value) => {
+                  setSelectedCategory(value)
+                  setCurrentPage(1) // Reset to first page on filter change
+                }}
+              >
                 <SelectTrigger className="w-full rounded-xl sm:w-40">
                   <SelectValue />
                 </SelectTrigger>
@@ -186,7 +201,14 @@ export default function FaqsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredFaqs.map((faq) => (
+                  {paginatedFaqs.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
+                        No FAQs found.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedFaqs.map((faq) => (
                     <tr key={faq.id} className="bg-card hover:bg-muted/30 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-start gap-3">
@@ -231,10 +253,25 @@ export default function FaqsPage() {
                         </DropdownMenu>
                       </td>
                     </tr>
-                  ))}
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
+            {/* Pagination */}
+            {filteredFaqs.length > 0 && (
+              <Pagination
+                currentPage={currentPage}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                totalItems={filteredFaqs.length}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={(size) => {
+                  setPageSize(size)
+                  setCurrentPage(1)
+                }}
+              />
+            )}
           </CardContent>
         </Card>
       </div>
