@@ -33,6 +33,17 @@ interface AuthState {
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
+//
+// KEY: We use `skipHydration: true` so Zustand NEVER calls storage.getItem
+// on the server.  Hydration is triggered manually in AuthInitializer via
+// useAuthStore.persist.rehydrate() inside a useEffect, which only runs in
+// the browser — this is the official Zustand v5 + Next.js SSR pattern.
+//
+// Without skipHydration, Next.js 15 dev mode passes `--localstorage-file`
+// to Node.js which creates a broken `localStorage` shim.  Zustand's persist
+// middleware was calling getItem() against that shim during SSR, causing
+// "localStorage.getItem is not a function" and HTTP 500 on every page load.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -58,21 +69,29 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
+      // createJSONStorage with a lazy factory that is only evaluated in the
+      // browser.  Because skipHydration: true prevents any server-side call
+      // to storage.getItem/setItem/removeItem, this factory will never run in
+      // Node.js — so we don't need a typeof window guard here.
       storage: createJSONStorage(() => localStorage),
-      // Persist everything — token, user AND isAuthenticated so the value
-      // is immediately correct the moment localStorage is read.
+      // Only persist what we need — token, user, and auth flag.
       partialize: (state) => ({
         token: state.token,
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),
-      // After localStorage is read, re-sync the axios interceptor with the
-      // restored token so API requests include the Authorization header.
+      // ⬇︎  THIS is the fix:
+      // Skip server-side hydration entirely.  AuthInitializer (a client
+      // component) calls useAuthStore.persist.rehydrate() in useEffect, which
+      // runs only in the browser after localStorage is available.
+      skipHydration: true,
+      // After localStorage is read on the client, re-sync the axios interceptor
+      // with the restored token so API requests include the Authorization header.
       onRehydrateStorage: () => (state) => {
         if (state?.token) {
           setAuthToken(state.token);
         }
       },
-    }
-  )
+    },
+  ),
 );
