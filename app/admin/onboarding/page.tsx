@@ -1,23 +1,42 @@
 "use client"
 
-import { useState, useEffect, useCallback, Suspense } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { AdminLayout } from "@/components/admin-layout"
 import {
-  createOnboarding,
-  getOnboardings,
-  getOnboardingById,
-  updateOnboarding,
-  deleteOnboarding,
-} from "@/lib/api/onboarding"
+  useOnboardings,
+  useOnboardingById,
+  useCreateOnboarding,
+  useUpdateOnboarding,
+  useDeleteOnboarding,
+} from "@/lib/hooks/use-onboardings"
 import type { OnboardingPayload } from "@/lib/api/types"
+import {
+  onboardingFormSchema,
+  ONBOARDING_FORM_DEFAULTS,
+  ONBOARDING_STEP_FIELDS,
+  type OnboardingFormValues,
+} from "@/lib/validations/onboarding"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Dialog,
   DialogContent,
@@ -26,6 +45,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form"
 import { Pagination } from "@/components/ui/pagination"
 import {
   Check,
@@ -65,21 +93,16 @@ type Onboarding = {
   id: string
   status: string
   createdAt: string
-  // Step 1 — Business Info
   companyName: string
   websiteUrl?: string
   industryCategory: string
   companySizeOrRole: string
   brandColors: { primary: string; secondary?: string }
   widgetPosition: "bottom-right" | "bottom-left"
-  // Step 2 — Agent Setup
   agentPersona: { alias: string; profileImageUrl?: string }
-  // Step 3 — Hours of Operation
   hoursOfOperation: { timezone: string; schedule: ScheduleDay[] }
-  // Step 4 — Language & Pre-Chat
   languagePreferences: { defaultLanguage: string; supportedLanguages: string[] }
   preChatFormFields: PreChatFormField[]
-  // Step 5 — Knowledge Base
   knowledgeBaseData: { urls: string[]; documents: string[] }
 }
 
@@ -199,50 +222,8 @@ function getTimezoneLabel(tz: string) {
   return timezoneOptions.find((t) => t.value === tz)?.label ?? tz
 }
 
-// ─── Page Component ───────────────────────────────────────────────────────────
-
-// ─── Inner component ─────────────────────────────────────────────────────────
-// Wrapped in Suspense by the exported OnboardingPage so that
-// useSearchParams() works correctly in Next.js App Router.
-
-function OnboardingPageInner() {
-  const router      = useRouter()
-  const searchParams = useSearchParams()
-
-  // View mode: 'list' | 'view' | 'form'
-  const [viewMode, setViewMode] = useState<"list" | "view" | "form">("list")
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [viewingId, setViewingId] = useState<string | null>(null)
-  // Holds the fully-fetched onboarding currently being viewed
-  const [viewingOnboarding, setViewingOnboarding] = useState<Onboarding | null>(null)
-
-  // Delete confirmation dialog
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
-
-  // List view state
-  const [onboardings, setOnboardings] = useState<Onboarding[]>([])
-  const [searchQuery, setSearchQuery] = useState("")
-  const [selectedStatus, setSelectedStatus] = useState("All")
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
-
-  // Server-side pagination totals (from API response)
-  const [serverTotal, setServerTotal] = useState(0)
-  const [serverTotalPages, setServerTotalPages] = useState(0)
-
-  // API states
-  const [isLoadingList, setIsLoadingList] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
-  const [apiError, setApiError] = useState<string | null>(null)
-
-  // Form stepper
-  const [currentStep, setCurrentStep] = useState(1)
-
-  // ── API: normalise backend item → local Onboarding type ───────────────────
-  // The backend may return _id instead of id; some fields may be absent.
-  const normaliseItem = useCallback((item: Record<string, unknown>): Onboarding => ({
+function normaliseItem(item: Record<string, unknown>): Onboarding {
+  return {
     id: (item._id ?? item.id ?? "") as string,
     status: (item.status ?? "draft") as string,
     createdAt: (item.createdAt ?? new Date().toISOString()) as string,
@@ -253,55 +234,42 @@ function OnboardingPageInner() {
     brandColors: (item.brandColors ?? { primary: "#10b981" }) as Onboarding["brandColors"],
     widgetPosition: (item.widgetPosition ?? "bottom-right") as Onboarding["widgetPosition"],
     agentPersona: (item.agentPersona ?? { alias: "" }) as Onboarding["agentPersona"],
-    hoursOfOperation: (item.hoursOfOperation ?? { timezone: "UTC", schedule: defaultSchedule }) as Onboarding["hoursOfOperation"],
-    languagePreferences: (item.languagePreferences ?? { defaultLanguage: "en", supportedLanguages: ["en"] }) as Onboarding["languagePreferences"],
+    hoursOfOperation: (item.hoursOfOperation ?? {
+      timezone: "UTC",
+      schedule: defaultSchedule,
+    }) as Onboarding["hoursOfOperation"],
+    languagePreferences: (item.languagePreferences ?? {
+      defaultLanguage: "en",
+      supportedLanguages: ["en"],
+    }) as Onboarding["languagePreferences"],
     preChatFormFields: (item.preChatFormFields ?? []) as Onboarding["preChatFormFields"],
-    knowledgeBaseData: (item.knowledgeBaseData ?? { urls: [], documents: [] }) as Onboarding["knowledgeBaseData"],
-  }), [])
+    knowledgeBaseData: (item.knowledgeBaseData ?? {
+      urls: [],
+      documents: [],
+    }) as Onboarding["knowledgeBaseData"],
+  }
+}
 
-  // ── API: load onboarding list ──────────────────────────────────────────────
-  const fetchOnboardings = useCallback(async (page: number, limit: number) => {
-    setIsLoadingList(true)
-    setApiError(null)
-    try {
-      const { items, pagination } = await getOnboardings({ page, limit })
-      setOnboardings(items.map((item) => normaliseItem(item as Record<string, unknown>)))
-      // Store server pagination metadata for the Pagination component
-      setServerTotal(pagination.total)
-      setServerTotalPages(pagination.totalPages)
-    } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? "Failed to load onboardings"
-      console.error("fetchOnboardings error:", err)
-      setApiError(msg)
-    } finally {
-      setIsLoadingList(false)
-    }
-  }, [normaliseItem])
+// ─── Inner component ──────────────────────────────────────────────────────────
 
-  // Load list on mount; re-fetch when page or page-size changes
-  useEffect(() => {
-    fetchOnboardings(currentPage, pageSize)
-  }, [fetchOnboardings, currentPage, pageSize])
+function OnboardingPageInner() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
 
-  // ── Step 1: Business Info ──────────────────────────────────────────────────
-  const [companyName, setCompanyName] = useState("")
-  const [websiteUrl, setWebsiteUrl] = useState("")
-  const [industryCategory, setIndustryCategory] = useState("")
-  const [companySizeOrRole, setCompanySizeOrRole] = useState("")
-  const [primaryColor, setPrimaryColor] = useState("#10b981")
-  const [secondaryColor, setSecondaryColor] = useState("#6366f1")
-  const [widgetPosition, setWidgetPosition] = useState<"bottom-right" | "bottom-left">("bottom-right")
+  // ── UI state ─────────────────────────────────────────────────────────────────
+  const [viewMode, setViewMode] = useState<"list" | "view" | "form">("list")
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [viewingId, setViewingId] = useState<string | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectedStatus, setSelectedStatus] = useState("All")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [currentStep, setCurrentStep] = useState(1)
 
-  // ── Step 2: Agent Setup ────────────────────────────────────────────────────
-  const [agentAlias, setAgentAlias] = useState("")
-  const [agentProfileImageUrl, setAgentProfileImageUrl] = useState("")
-
-  // ── Step 3: Hours of Operation ─────────────────────────────────────────────
-  const [timezone, setTimezone] = useState("America/New_York")
+  // ── Dynamic array state (complex UI collections) ──────────────────────────
   const [schedule, setSchedule] = useState<ScheduleDay[]>(defaultSchedule)
-
-  // ── Step 4: Language & Pre-Chat ────────────────────────────────────────────
-  const [defaultLanguage, setDefaultLanguage] = useState("en")
   const [supportedLanguages, setSupportedLanguages] = useState<string[]>(["en"])
   const [preChatFormFields, setPreChatFormFields] = useState<PreChatFormField[]>([])
   const [showAddField, setShowAddField] = useState(false)
@@ -313,225 +281,148 @@ function OnboardingPageInner() {
     options: [],
   })
   const [newFieldOption, setNewFieldOption] = useState("")
-
-  // ── Step 5: Knowledge Base ─────────────────────────────────────────────────
   const [knowledgeBaseUrls, setKnowledgeBaseUrls] = useState<string[]>([])
   const [knowledgeBaseDocuments, setKnowledgeBaseDocuments] = useState<string[]>([])
   const [newUrl, setNewUrl] = useState("")
   const [newDocument, setNewDocument] = useState("")
 
-  // ── Filtering & Pagination ─────────────────────────────────────────────────
-  // The API handles page / limit server-side.
-  // We still apply search and status filters client-side on the loaded page
-  // of items so the user gets instant feedback without an extra round-trip.
+  // ── React Query ───────────────────────────────────────────────────────────
+  const onboardingsQuery = useOnboardings({ page: currentPage, limit: pageSize })
+  // Single detail query — resolved ID depends on the current view mode
+  const activeDetailId =
+    viewMode === "view" ? viewingId : viewMode === "form" ? editingId : null
+  const detailQuery = useOnboardingById(activeDetailId)
+  const createMutation = useCreateOnboarding()
+  const updateMutation = useUpdateOnboarding()
+  const deleteMutation = useDeleteOnboarding()
 
-  const filteredOnboardings = onboardings.filter((o) => {
-    const q = searchQuery.toLowerCase()
-    const matchesSearch =
-      o.companyName.toLowerCase().includes(q) ||
-      o.industryCategory.toLowerCase().includes(q) ||
-      (o.websiteUrl ?? "").toLowerCase().includes(q) ||
-      o.agentPersona.alias.toLowerCase().includes(q)
-    const matchesStatus = selectedStatus === "All" || o.status === selectedStatus
-    return matchesSearch && matchesStatus
+  // ── Derived data ──────────────────────────────────────────────────────────
+  const onboardings = (onboardingsQuery.data?.items ?? []).map((item) =>
+    normaliseItem(item as unknown as Record<string, unknown>)
+  )
+  const serverTotal = onboardingsQuery.data?.pagination.total ?? 0
+  const serverTotalPages = onboardingsQuery.data?.pagination.totalPages ?? 0
+
+  const viewingOnboarding =
+    viewMode === "view" && detailQuery.data
+      ? normaliseItem(detailQuery.data as unknown as Record<string, unknown>)
+      : null
+
+  // ── Form ──────────────────────────────────────────────────────────────────
+  const form = useForm<OnboardingFormValues>({
+    resolver: zodResolver(onboardingFormSchema),
+    defaultValues: ONBOARDING_FORM_DEFAULTS,
+    mode: "onTouched",
   })
 
-  // For the Pagination component:
-  //  - When no client filter is active → use the server's total / totalPages
-  //  - When a filter is active         → fall back to client-side counts so the
-  //    numbers stay consistent with what the user actually sees
-  const isFiltering = searchQuery !== "" || selectedStatus !== "All"
-  const displayTotal      = isFiltering ? filteredOnboardings.length : serverTotal
-  const displayTotalPages = isFiltering
-    ? Math.max(1, Math.ceil(filteredOnboardings.length / pageSize))
-    : Math.max(1, serverTotalPages)
-
-  // When filtering client-side, we also slice. Without a filter, the server
-  // already returned exactly one page of results, so no slice is needed.
-  const paginatedOnboardings = isFiltering
-    ? filteredOnboardings.slice((currentPage - 1) * pageSize, currentPage * pageSize)
-    : filteredOnboardings
-
-  // ── Form Helpers ───────────────────────────────────────────────────────────
-
-  /** Reset all form fields to empty defaults (used for Create) */
-  const resetForm = () => {
-    setCompanyName("")
-    setWebsiteUrl("")
-    setIndustryCategory("")
-    setCompanySizeOrRole("")
-    setPrimaryColor("#10b981")
-    setSecondaryColor("#6366f1")
-    setWidgetPosition("bottom-right")
-    setAgentAlias("")
-    setAgentProfileImageUrl("")
-    setTimezone("America/New_York")
-    setSchedule(defaultSchedule)
-    setDefaultLanguage("en")
-    setSupportedLanguages(["en"])
-    setPreChatFormFields([])
-    setShowAddField(false)
-    setNewField({ key: "", label: "", type: "text", required: false, options: [] })
-    setKnowledgeBaseUrls([])
-    setKnowledgeBaseDocuments([])
-    setNewUrl("")
-    setNewDocument("")
-  }
-
-  /** Pre-fill all form fields from an existing onboarding (used for Edit) */
-  const prefillForm = (o: Onboarding) => {
-    setCompanyName(o.companyName)
-    setWebsiteUrl(o.websiteUrl ?? "")
-    setIndustryCategory(o.industryCategory)
-    setCompanySizeOrRole(o.companySizeOrRole)
-    setPrimaryColor(o.brandColors.primary)
-    setSecondaryColor(o.brandColors.secondary ?? "#6366f1")
-    setWidgetPosition(o.widgetPosition)
-    setAgentAlias(o.agentPersona.alias)
-    setAgentProfileImageUrl(o.agentPersona.profileImageUrl ?? "")
-    setTimezone(o.hoursOfOperation.timezone)
-    // Strip MongoDB-injected _id from each schedule item — the backend schema
-    // uses additionalProperties: false and will reject _id on PATCH requests.
-    setSchedule(
-      o.hoursOfOperation.schedule.map(({ day, start, end, isOpen }) => ({
-        day,
-        start,
-        end,
-        isOpen,
-      }))
-    )
-    setDefaultLanguage(o.languagePreferences.defaultLanguage)
-    setSupportedLanguages(o.languagePreferences.supportedLanguages)
-    // Strip _id from pre-chat fields for the same reason
-    setPreChatFormFields(
-      (o.preChatFormFields ?? []).map(({ key, label, type, required, options }) => ({
-        key,
-        label,
-        type,
-        required,
-        options,
-      }))
-    )
-    setKnowledgeBaseUrls(o.knowledgeBaseData.urls ?? [])
-    setKnowledgeBaseDocuments(o.knowledgeBaseData.documents ?? [])
-  }
-
-  // ── URL ↔ State synchronisation ───────────────────────────────────────────
-  //
-  // URL patterns:
-  //   /admin/onboarding                     → list mode
-  //   /admin/onboarding?mode=create         → create new
-  //   /admin/onboarding?id=xxx&mode=view    → view single onboarding
-  //   /admin/onboarding?id=xxx&mode=edit    → edit single onboarding
-  //
-  // This effect responds to every URL change (including browser back/forward).
-  // Navigation handlers below ONLY push the URL — this effect does the work.
-
+  // Pre-fill form when editing and fresh detail data arrives
   useEffect(() => {
-    const id   = searchParams.get("id")
+    if (viewMode === "form" && editingId && detailQuery.data) {
+      const n = normaliseItem(detailQuery.data as unknown as Record<string, unknown>)
+      form.reset({
+        companyName: n.companyName,
+        websiteUrl: n.websiteUrl ?? "",
+        industryCategory: n.industryCategory,
+        companySizeOrRole: n.companySizeOrRole,
+        primaryColor: n.brandColors.primary,
+        secondaryColor: n.brandColors.secondary ?? "#6366f1",
+        widgetPosition: n.widgetPosition,
+        agentAlias: n.agentPersona.alias,
+        agentProfileImageUrl: n.agentPersona.profileImageUrl ?? "",
+        timezone: n.hoursOfOperation.timezone,
+        defaultLanguage: n.languagePreferences.defaultLanguage,
+      })
+      setSchedule(
+        n.hoursOfOperation.schedule.map(({ day, start, end, isOpen }) => ({
+          day,
+          start,
+          end,
+          isOpen,
+        }))
+      )
+      setSupportedLanguages(n.languagePreferences.supportedLanguages)
+      setPreChatFormFields(
+        (n.preChatFormFields ?? []).map(({ key, label, type, required, options }) => ({
+          key,
+          label,
+          type,
+          required,
+          options,
+        }))
+      )
+      setKnowledgeBaseUrls(n.knowledgeBaseData.urls ?? [])
+      setKnowledgeBaseDocuments(n.knowledgeBaseData.documents ?? [])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailQuery.data, viewMode, editingId])
+
+  // ── URL ↔ State synchronisation ────────────────────────────────────────────
+  useEffect(() => {
+    const id = searchParams.get("id")
     const mode = searchParams.get("mode")
 
     if (mode === "view" && id) {
       setViewMode("view")
       setViewingId(id)
-      setApiError(null)
-      // Immediately show cached data if available
-      const cached = onboardings.find((o) => o.id === id)
-      if (cached) setViewingOnboarding(cached)
-      // Fetch fresh copy from API
-      void (async () => {
-        try {
-          const fresh      = await getOnboardingById(id)
-          const normalised = normaliseItem(fresh as Record<string, unknown>)
-          setViewingOnboarding(normalised)
-          setOnboardings((prev) => prev.map((o) => (o.id === id ? normalised : o)))
-        } catch (err) {
-          setApiError((err as { message?: string })?.message ?? "Failed to load onboarding")
-        }
-      })()
-
+      setEditingId(null)
     } else if (mode === "edit" && id) {
       setViewMode("form")
       setEditingId(id)
+      setViewingId(null)
       setCurrentStep(1)
-      setApiError(null)
-      // Pre-fill from cache immediately for instant feedback
-      const cached = onboardings.find((o) => o.id === id)
-      if (cached) prefillForm(cached)
-      // Fetch fresh data and re-fill (overwrites cache values)
-      void (async () => {
-        try {
-          const fresh      = await getOnboardingById(id)
-          const normalised = normaliseItem(fresh as Record<string, unknown>)
-          prefillForm(normalised)
-          setOnboardings((prev) => prev.map((o) => (o.id === id ? normalised : o)))
-        } catch (err) {
-          console.error("URL sync – edit prefill fetch error (non-critical):", err)
-        }
-      })()
-
     } else if (mode === "create") {
       setViewMode("form")
       setEditingId(null)
+      setViewingId(null)
       setCurrentStep(1)
-      resetForm()
-
+      form.reset(ONBOARDING_FORM_DEFAULTS)
+      setSchedule(defaultSchedule)
+      setSupportedLanguages(["en"])
+      setPreChatFormFields([])
+      setShowAddField(false)
+      setNewField({ key: "", label: "", type: "text", required: false, options: [] })
+      setKnowledgeBaseUrls([])
+      setKnowledgeBaseDocuments([])
+      setNewUrl("")
+      setNewDocument("")
     } else {
-      // No mode param → list view
       setViewMode("list")
       setEditingId(null)
       setViewingId(null)
-      setViewingOnboarding(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
-  // ── Action Handlers ────────────────────────────────────────────────────────
-  // Each handler simply updates the URL; the useEffect above reacts to the
-  // URL change and performs the actual state updates + data fetching.
-
-  const handleCreateNew = () => {
+  // ── Navigation handlers ────────────────────────────────────────────────────
+  const handleCreateNew = () =>
     router.push("/admin/onboarding?mode=create", { scroll: false })
-  }
-
-  const handleView = (id: string) => {
+  const handleView = (id: string) =>
     router.push(`/admin/onboarding?id=${id}&mode=view`, { scroll: false })
-  }
-
-  const handleEdit = (id: string) => {
+  const handleEdit = (id: string) =>
     router.push(`/admin/onboarding?id=${id}&mode=edit`, { scroll: false })
-  }
-
   const handleDeleteRequest = (id: string) => {
     setPendingDeleteId(id)
     setDeleteDialogOpen(true)
   }
+  const handleBackToList = () => router.push("/admin/onboarding", { scroll: false })
 
-  const handleDeleteConfirm = async () => {
+  const handleDeleteConfirm = () => {
     if (!pendingDeleteId) return
-    setIsDeleting(true)
-    setApiError(null)
-    try {
-      await deleteOnboarding(pendingDeleteId)
-      // Remove from local state immediately for snappy UX, then refresh from server
-      setOnboardings((prev) => prev.filter((o) => o.id !== pendingDeleteId))
-      // Re-fetch to get updated server totals
-      fetchOnboardings(currentPage, pageSize)
-    } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? "Failed to delete onboarding"
-      setApiError(msg)
-    } finally {
-      setIsDeleting(false)
-      setDeleteDialogOpen(false)
-      setPendingDeleteId(null)
-    }
+    deleteMutation.mutate(pendingDeleteId, {
+      onSettled: () => {
+        setDeleteDialogOpen(false)
+        setPendingDeleteId(null)
+      },
+    })
   }
 
-  const handleBackToList = () => {
-    router.push("/admin/onboarding", { scroll: false })
+  // ── Step navigation with per-step validation ──────────────────────────────
+  const handleNext = async () => {
+    const valid = await form.trigger(ONBOARDING_STEP_FIELDS[currentStep])
+    if (valid) setCurrentStep((s) => Math.min(5, s + 1))
   }
 
-  // Schedule helper
+  // ── Schedule helpers ──────────────────────────────────────────────────────
   const updateScheduleDay = (
     day: string,
     field: keyof ScheduleDay,
@@ -540,7 +431,7 @@ function OnboardingPageInner() {
     setSchedule(schedule.map((s) => (s.day === day ? { ...s, [field]: value } : s)))
   }
 
-  // Language helpers
+  // ── Language helpers ──────────────────────────────────────────────────────
   const addLanguage = (lang: string) => {
     if (lang && !supportedLanguages.includes(lang)) {
       setSupportedLanguages([...supportedLanguages, lang])
@@ -552,7 +443,7 @@ function OnboardingPageInner() {
     }
   }
 
-  // Pre-chat field helpers
+  // ── Pre-chat field helpers ────────────────────────────────────────────────
   const addPreChatField = () => {
     if (!newField.key || !newField.label) return
     setPreChatFormFields([...preChatFormFields, { ...newField }])
@@ -565,15 +456,21 @@ function OnboardingPageInner() {
   }
   const addFieldOption = () => {
     if (newFieldOption.trim()) {
-      setNewField({ ...newField, options: [...(newField.options ?? []), newFieldOption.trim()] })
+      setNewField({
+        ...newField,
+        options: [...(newField.options ?? []), newFieldOption.trim()],
+      })
       setNewFieldOption("")
     }
   }
   const removeFieldOption = (opt: string) => {
-    setNewField({ ...newField, options: (newField.options ?? []).filter((o) => o !== opt) })
+    setNewField({
+      ...newField,
+      options: (newField.options ?? []).filter((o) => o !== opt),
+    })
   }
 
-  // Knowledge base helpers
+  // ── Knowledge base helpers ────────────────────────────────────────────────
   const addUrl = () => {
     if (newUrl.trim()) {
       setKnowledgeBaseUrls([...knowledgeBaseUrls, newUrl.trim()])
@@ -587,84 +484,87 @@ function OnboardingPageInner() {
     }
   }
 
-  // ── API: submit form (create or update) ────────────────────────────────────
-
-  const handleFormSubmit = async () => {
-    setIsSubmitting(true)
-    setApiError(null)
-
-    // Build the payload from all form state — matches OnboardingPayload exactly
+  // ── Form submit ───────────────────────────────────────────────────────────
+  const onSubmit = (values: OnboardingFormValues) => {
     const payload: OnboardingPayload = {
-      companyName,
-      websiteUrl: websiteUrl || undefined,
-      industryCategory,
-      companySizeOrRole,
+      companyName: values.companyName,
+      websiteUrl: values.websiteUrl || undefined,
+      industryCategory: values.industryCategory,
+      companySizeOrRole: values.companySizeOrRole,
       brandColors: {
-        primary: primaryColor,
-        secondary: secondaryColor || undefined,
+        primary: values.primaryColor,
+        secondary: values.secondaryColor || undefined,
       },
-      widgetPosition,
+      widgetPosition: values.widgetPosition,
       agentPersona: {
-        alias: agentAlias,
-        profileImageUrl: agentProfileImageUrl || undefined,
+        alias: values.agentAlias,
+        profileImageUrl: values.agentProfileImageUrl || undefined,
       },
-      hoursOfOperation: {
-        timezone,
-        schedule,
-      },
-      languagePreferences: {
-        defaultLanguage,
-        supportedLanguages,
-      },
+      hoursOfOperation: { timezone: values.timezone, schedule },
+      languagePreferences: { defaultLanguage: values.defaultLanguage, supportedLanguages },
       preChatFormFields: preChatFormFields.length > 0 ? preChatFormFields : undefined,
-      knowledgeBaseData: {
-        urls: knowledgeBaseUrls,
-        documents: knowledgeBaseDocuments,
-      },
+      knowledgeBaseData: { urls: knowledgeBaseUrls, documents: knowledgeBaseDocuments },
     }
 
-    try {
-      if (editingId) {
-        // ── UPDATE existing onboarding ──
-        const updated = await updateOnboarding(editingId, payload)
-        const normalised = normaliseItem(updated as Record<string, unknown>)
-        setOnboardings((prev) =>
-          prev.map((o) => (o.id === editingId ? normalised : o))
-        )
-      } else {
-        // ── CREATE new onboarding ──
-        const created = await createOnboarding(payload)
-        const normalised = normaliseItem(created as Record<string, unknown>)
-        setOnboardings((prev) => [normalised, ...prev])
-      }
-      // Navigate back to list and refresh so server totals are accurate
-      handleBackToList()
-      fetchOnboardings(currentPage, pageSize)
-    } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? "Failed to save onboarding"
-      setApiError(msg)
-    } finally {
-      setIsSubmitting(false)
+    if (editingId) {
+      updateMutation.mutate(
+        { id: editingId, payload },
+        { onSuccess: () => handleBackToList() }
+      )
+    } else {
+      createMutation.mutate(payload, { onSuccess: () => handleBackToList() })
     }
   }
 
-  // ── VIEW MODE ──────────────────────────────────────────────────────────────
+  // ── Filter + paginate ─────────────────────────────────────────────────────
+  const filteredOnboardings = onboardings.filter((o) => {
+    const q = searchQuery.toLowerCase()
+    const matchesSearch =
+      o.companyName.toLowerCase().includes(q) ||
+      o.industryCategory.toLowerCase().includes(q) ||
+      (o.websiteUrl ?? "").toLowerCase().includes(q) ||
+      o.agentPersona.alias.toLowerCase().includes(q)
+    const matchesStatus = selectedStatus === "All" || o.status === selectedStatus
+    return matchesSearch && matchesStatus
+  })
+
+  const isFiltering = searchQuery !== "" || selectedStatus !== "All"
+  const displayTotal = isFiltering ? filteredOnboardings.length : serverTotal
+  const displayTotalPages = isFiltering
+    ? Math.max(1, Math.ceil(filteredOnboardings.length / pageSize))
+    : Math.max(1, serverTotalPages)
+  const paginatedOnboardings = isFiltering
+    ? filteredOnboardings.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+    : filteredOnboardings
+
+  const isSubmitting = createMutation.isPending || updateMutation.isPending
+  const submitError =
+    createMutation.error?.message ?? updateMutation.error?.message ?? null
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VIEW MODE
+  // ═══════════════════════════════════════════════════════════════════════════
 
   if (viewMode === "view") {
-    // Show spinner while data is being fetched
-    if (!viewingOnboarding) {
+    if (detailQuery.isLoading || !viewingOnboarding) {
       return (
         <AdminLayout title="View Onboarding">
           <div className="flex items-center justify-center py-24 text-muted-foreground">
-            Loading onboarding…
+            {detailQuery.error ? (
+              <span className="text-destructive">
+                {detailQuery.error.message || "Failed to load onboarding"}
+              </span>
+            ) : (
+              "Loading onboarding…"
+            )}
           </div>
         </AdminLayout>
       )
     }
+
     return (
       <AdminLayout title="View Onboarding">
         <div className="mx-auto max-w-4xl">
-          {/* Top bar */}
           <div className="mb-6 flex items-center justify-between">
             <Button variant="ghost" onClick={handleBackToList} className="rounded-xl">
               <ArrowLeft className="mr-2 h-4 w-4" />
@@ -677,7 +577,7 @@ function OnboardingPageInner() {
           </div>
 
           <div className="space-y-6">
-            {/* ── Step 1: Business Info ── */}
+            {/* Step 1 */}
             <Card className="rounded-2xl">
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -735,7 +635,7 @@ function OnboardingPageInner() {
               </CardContent>
             </Card>
 
-            {/* ── Step 2: Agent Setup ── */}
+            {/* Step 2 */}
             <Card className="rounded-2xl">
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -761,7 +661,7 @@ function OnboardingPageInner() {
               </CardContent>
             </Card>
 
-            {/* ── Step 3: Hours of Operation ── */}
+            {/* Step 3 */}
             <Card className="rounded-2xl">
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -811,7 +711,7 @@ function OnboardingPageInner() {
               </CardContent>
             </Card>
 
-            {/* ── Step 4: Language & Pre-Chat ── */}
+            {/* Step 4 */}
             <Card className="rounded-2xl">
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -887,7 +787,7 @@ function OnboardingPageInner() {
               </CardContent>
             </Card>
 
-            {/* ── Step 5: Knowledge Base ── */}
+            {/* Step 5 */}
             <Card className="rounded-2xl">
               <CardHeader>
                 <div className="flex items-center gap-2">
@@ -946,11 +846,13 @@ function OnboardingPageInner() {
     )
   }
 
-  // ── LIST VIEW ──────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LIST VIEW
+  // ═══════════════════════════════════════════════════════════════════════════
 
   if (viewMode === "list") {
-  return (
-    <AdminLayout title="Onboarding">
+    return (
+      <AdminLayout title="Onboarding">
         {/* Delete Confirmation Dialog */}
         <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <DialogContent className="sm:max-w-md">
@@ -974,11 +876,11 @@ function OnboardingPageInner() {
               <Button
                 variant="destructive"
                 onClick={handleDeleteConfirm}
-                disabled={isDeleting}
+                disabled={deleteMutation.isPending}
                 className="rounded-xl"
               >
                 <Trash2 className="mr-2 h-4 w-4" />
-                {isDeleting ? "Deleting…" : "Delete"}
+                {deleteMutation.isPending ? "Deleting…" : "Delete"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1039,10 +941,15 @@ function OnboardingPageInner() {
             </CardContent>
           </Card>
 
-          {/* API error banner */}
-          {apiError && (
+          {/* Error banners */}
+          {onboardingsQuery.error && (
             <div className="rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {apiError}
+              {onboardingsQuery.error.message || "Failed to load onboardings"}
+            </div>
+          )}
+          {deleteMutation.error && (
+            <div className="rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {deleteMutation.error.message || "Failed to delete onboarding"}
             </div>
           )}
 
@@ -1063,7 +970,7 @@ function OnboardingPageInner() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {isLoadingList ? (
+                    {onboardingsQuery.isLoading ? (
                       <tr>
                         <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
                           Loading onboardings…
@@ -1081,7 +988,6 @@ function OnboardingPageInner() {
                           key={onboarding.id}
                           className="bg-card transition-colors hover:bg-muted/30"
                         >
-                          {/* Company */}
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                               <div
@@ -1101,21 +1007,17 @@ function OnboardingPageInner() {
                               </div>
                             </div>
                           </td>
-                          {/* Industry */}
                           <td className="px-6 py-4 text-sm text-muted-foreground">
                             {onboarding.industryCategory}
                           </td>
-                          {/* Agent */}
                           <td className="px-6 py-4">
                             <span className="inline-flex items-center rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground">
                               {onboarding.agentPersona.alias}
                             </span>
                           </td>
-                          {/* Widget Position */}
                           <td className="px-6 py-4 text-sm capitalize text-muted-foreground">
                             {onboarding.widgetPosition.replace("-", " ")}
                           </td>
-                          {/* Status */}
                           <td className="px-6 py-4">
                             <span
                               className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${getStatusColor(onboarding.status)}`}
@@ -1123,11 +1025,9 @@ function OnboardingPageInner() {
                               {onboarding.status.replace("_", " ")}
                             </span>
                           </td>
-                          {/* Created */}
                           <td className="px-6 py-4 text-sm text-muted-foreground">
                             {onboarding.createdAt}
                           </td>
-                          {/* Actions */}
                           <td className="px-6 py-4 text-right">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -1181,7 +1081,9 @@ function OnboardingPageInner() {
     )
   }
 
-  // ── FORM VIEW ──────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FORM VIEW (Create / Edit)
+  // ═══════════════════════════════════════════════════════════════════════════
 
   return (
     <AdminLayout title={editingId ? "Edit Onboarding" : "Create Onboarding"}>
@@ -1231,788 +1133,889 @@ function OnboardingPageInner() {
           </div>
         </div>
 
-        <Card className="rounded-2xl shadow-lg">
-          {/* ── Step 1: Business Info ───────────────────────────────────────────── */}
-          {currentStep === 1 && (
-            <>
-              <CardHeader>
-                <CardTitle>Business Info</CardTitle>
-                <CardDescription>
-                  Set up your company details, branding, and widget preferences
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Company Name + Website */}
-                <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                    <Label htmlFor="companyName">
-                      Company Name <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      id="companyName"
-                      placeholder="Grand Hotel"
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                      className="rounded-xl"
-                      maxLength={120}
-                    />
-                    <p className="text-xs text-muted-foreground">{companyName.length}/120 characters</p>
-                    </div>
-                    <div className="space-y-2">
-                    <Label htmlFor="websiteUrl">
-                      Website URL{" "}
-                      <span className="text-xs text-muted-foreground">(optional)</span>
-                    </Label>
-                    <Input
-                      id="websiteUrl"
-                      placeholder="https://yourcompany.com"
-                      value={websiteUrl}
-                      onChange={(e) => setWebsiteUrl(e.target.value)}
-                      className="rounded-xl"
-                    />
-                    </div>
-                </div>
-
-                {/* Industry + Company Size */}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>
-                      Industry Category <span className="text-destructive">*</span>
-                    </Label>
-                    <Select value={industryCategory} onValueChange={setIndustryCategory}>
-                      <SelectTrigger className="rounded-xl">
-                        <SelectValue placeholder="Select industry" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {industryOptions.map((opt) => (
-                          <SelectItem key={opt} value={opt}>
-                            {opt}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>
-                      Company Size <span className="text-destructive">*</span>
-                    </Label>
-                    <Select value={companySizeOrRole} onValueChange={setCompanySizeOrRole}>
-                      <SelectTrigger className="rounded-xl">
-                        <SelectValue placeholder="Select size" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {companySizeOptions.map((opt) => (
-                          <SelectItem key={opt} value={opt}>
-                            {opt}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* Widget Position */}
-                <div className="space-y-3">
-                  <Label>
-                    Widget Position <span className="text-destructive">*</span>
-                  </Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {(["bottom-right", "bottom-left"] as const).map((pos) => (
-                      <div
-                        key={pos}
-                        onClick={() => setWidgetPosition(pos)}
-                        className={cn(
-                          "cursor-pointer rounded-xl border-2 p-4 transition-all",
-                          widgetPosition === pos
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:border-primary/50"
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)}>
+            <Card className="rounded-2xl shadow-lg">
+              {/* ── Step 1: Business Info ───────────────────────────────────── */}
+              {currentStep === 1 && (
+                <>
+                  <CardHeader>
+                    <CardTitle>Business Info</CardTitle>
+                    <CardDescription>
+                      Set up your company details, branding, and widget preferences
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="companyName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              Company Name <span className="text-destructive">*</span>
+                            </FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="Grand Hotel"
+                                className="rounded-xl"
+                                maxLength={120}
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormDescription>{field.value.length}/120 characters</FormDescription>
+                            <FormMessage />
+                          </FormItem>
                         )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <p className="font-medium capitalize text-foreground">
-                            {pos.replace("-", " ")}
-                          </p>
-                          {widgetPosition === pos && (
-                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary">
-                              <Check className="h-3 w-3 text-primary-foreground" />
+                      />
+                      <FormField
+                        control={form.control}
+                        name="websiteUrl"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              Website URL{" "}
+                              <span className="text-xs text-muted-foreground">(optional)</span>
+                            </FormLabel>
+                            <FormControl>
+                              <Input
+                                placeholder="https://yourcompany.com"
+                                className="rounded-xl"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="industryCategory"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              Industry Category <span className="text-destructive">*</span>
+                            </FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger className="rounded-xl">
+                                  <SelectValue placeholder="Select industry" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {industryOptions.map((opt) => (
+                                  <SelectItem key={opt} value={opt}>
+                                    {opt}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="companySizeOrRole"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              Company Size <span className="text-destructive">*</span>
+                            </FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger className="rounded-xl">
+                                  <SelectValue placeholder="Select size" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {companySizeOptions.map((opt) => (
+                                  <SelectItem key={opt} value={opt}>
+                                    {opt}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={form.control}
+                      name="widgetPosition"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Widget Position <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <FormControl>
+                            <div className="grid grid-cols-2 gap-3">
+                              {(["bottom-right", "bottom-left"] as const).map((pos) => (
+                                <div
+                                  key={pos}
+                                  onClick={() => field.onChange(pos)}
+                                  className={cn(
+                                    "cursor-pointer rounded-xl border-2 p-4 transition-all",
+                                    field.value === pos
+                                      ? "border-primary bg-primary/5"
+                                      : "border-border hover:border-primary/50"
+                                  )}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <p className="font-medium capitalize text-foreground">
+                                      {pos.replace("-", " ")}
+                                    </p>
+                                    {field.value === pos && (
+                                      <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary">
+                                        <Check className="h-3 w-3 text-primary-foreground" />
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="relative mt-3 h-14 w-full rounded-lg border border-border bg-muted/50">
+                                    <div
+                                      className={cn(
+                                        "absolute bottom-2 h-5 w-5 rounded-full bg-primary",
+                                        pos === "bottom-right" ? "right-2" : "left-2"
+                                      )}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          )}
-                        </div>
-                        {/* Visual preview */}
-                        <div className="relative mt-3 h-14 w-full rounded-lg border border-border bg-muted/50">
-                          <div
-                            className={cn(
-                              "absolute bottom-2 h-5 w-5 rounded-full bg-primary",
-                              pos === "bottom-right" ? "right-2" : "left-2"
-                            )}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Brand Colors */}
-                <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                    <Label>
-                      Primary Brand Color <span className="text-destructive">*</span>
-                    </Label>
-                    <div className="flex items-center gap-3">
-                    <input
-                      type="color"
-                        value={primaryColor}
-                        onChange={(e) => setPrimaryColor(e.target.value)}
-                        className="h-10 w-10 cursor-pointer rounded-lg border border-border"
-                    />
-                    <Input
-                        value={primaryColor}
-                        onChange={(e) => setPrimaryColor(e.target.value)}
-                      className="w-32 rounded-xl font-mono"
-                        placeholder="#10b981"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                    <Label>
-                      Secondary Brand Color{" "}
-                      <span className="text-xs text-muted-foreground">(optional)</span>
-                    </Label>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="color"
-                        value={secondaryColor}
-                        onChange={(e) => setSecondaryColor(e.target.value)}
-                        className="h-10 w-10 cursor-pointer rounded-lg border border-border"
-                      />
-                      <Input
-                        value={secondaryColor}
-                        onChange={(e) => setSecondaryColor(e.target.value)}
-                        className="w-32 rounded-xl font-mono"
-                        placeholder="#6366f1"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </>
-          )}
-
-          {/* ── Step 2: Agent Setup ─────────────────────────────────────────────── */}
-          {currentStep === 2 && (
-            <>
-              <CardHeader>
-                <CardTitle>Agent Setup</CardTitle>
-                <CardDescription>
-                  Configure your AI agent's name and appearance
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-2">
-                  <Label htmlFor="agentAlias">
-                    Agent Alias <span className="text-destructive">*</span>
-                  </Label>
-                  <Input
-                    id="agentAlias"
-                    placeholder="e.g. Maya, Aria, Nova"
-                    value={agentAlias}
-                    onChange={(e) => setAgentAlias(e.target.value)}
-                    className="rounded-xl"
-                    maxLength={50}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    The name your AI assistant will use when greeting customers (2–50 characters)
-                  </p>
-                      </div>
-
-                <div className="space-y-2">
-                  <Label>
-                    Profile Image{" "}
-                    <span className="text-xs text-muted-foreground">(optional)</span>
-                  </Label>
-                  <div className="flex items-center gap-5">
-                    <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center rounded-2xl border-2 border-dashed border-border bg-muted/50 overflow-hidden">
-                      {agentProfileImageUrl ? (
-                        <img
-                          src={agentProfileImageUrl}
-                          alt="Agent"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <Upload className="h-6 w-6 text-muted-foreground" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
                       )}
-                      </div>
-                    <div className="flex-1 space-y-2">
-                      <Input
-                        placeholder="https://example.com/avatar.png"
-                        value={agentProfileImageUrl}
-                        onChange={(e) => setAgentProfileImageUrl(e.target.value)}
-                        className="rounded-xl"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Enter a public image URL for your agent's avatar
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </>
-          )}
+                    />
 
-          {/* ── Step 3: Hours of Operation ──────────────────────────────────────── */}
-          {currentStep === 3 && (
-            <>
-              <CardHeader>
-                <CardTitle>Hours of Operation</CardTitle>
-                <CardDescription>Set when your business is open and available</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-2">
-                  <Label>
-                    Timezone <span className="text-destructive">*</span>
-                  </Label>
-                  <Select value={timezone} onValueChange={setTimezone}>
-                    <SelectTrigger className="rounded-xl">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {timezoneOptions.map((tz) => (
-                        <SelectItem key={tz.value} value={tz.value}>
-                          {tz.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>
-                    Weekly Schedule <span className="text-destructive">*</span>
-                  </Label>
-                <div className="overflow-hidden rounded-xl border border-border">
-                  <table className="w-full">
-                    <thead className="bg-muted/50">
-                      <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">
-                            Day
-                          </th>
-                          <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground">
-                            Open
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">
-                            Opens At
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">
-                            Closes At
-                          </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                        {schedule.map((day) => (
-                          <tr
-                            key={day.day}
-                            className={cn("bg-card transition-opacity", !day.isOpen && "opacity-50")}
-                          >
-                            <td className="px-4 py-3 text-sm font-medium capitalize text-foreground">
-                              {day.day}
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                            <Switch
-                                checked={day.isOpen}
-                              onCheckedChange={(checked) =>
-                                  updateScheduleDay(day.day, "isOpen", checked)
-                              }
-                            />
-                          </td>
-                            <td className="px-4 py-3">
-                              <input
-                                type="time"
-                                value={day.start}
-                                onChange={(e) =>
-                                  updateScheduleDay(day.day, "start", e.target.value)
-                                }
-                                disabled={!day.isOpen}
-                                className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                              />
-                            </td>
-                            <td className="px-4 py-3">
-                              <input
-                                type="time"
-                                value={day.end}
-                                onChange={(e) =>
-                                  updateScheduleDay(day.day, "end", e.target.value)
-                                }
-                                disabled={!day.isOpen}
-                                className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                              />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  </div>
-                </div>
-              </CardContent>
-            </>
-          )}
-
-          {/* ── Step 4: Language & Pre-Chat ─────────────────────────────────────── */}
-          {currentStep === 4 && (
-            <>
-              <CardHeader>
-                <CardTitle>Language & Pre-Chat Form</CardTitle>
-                <CardDescription>
-                  Set language preferences and optional fields shown before a chat starts
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Language selectors */}
-                <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                    <Label>
-                      Default Language <span className="text-destructive">*</span>
-                    </Label>
-                    <Select
-                      value={defaultLanguage}
-                      onValueChange={(v) => {
-                        setDefaultLanguage(v)
-                        // Keep default language always in the supported list
-                        if (!supportedLanguages.includes(v)) {
-                          setSupportedLanguages([v, ...supportedLanguages])
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="rounded-xl">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {languageOptions.map((l) => (
-                          <SelectItem key={l.value} value={l.value}>
-                            {l.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Add Supported Language</Label>
-                    <Select onValueChange={addLanguage}>
-                      <SelectTrigger className="rounded-xl">
-                        <SelectValue placeholder="Add language..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {languageOptions
-                          .filter((l) => !supportedLanguages.includes(l.value))
-                          .map((l) => (
-                            <SelectItem key={l.value} value={l.value}>
-                              {l.label}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* Supported languages tag list */}
-                <div className="space-y-2">
-                  <Label>Supported Languages</Label>
-                  <div className="flex min-h-12 flex-wrap gap-2 rounded-xl border border-border p-3">
-                    {supportedLanguages.map((lang) => (
-                      <span
-                        key={lang}
-                        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
-                      >
-                        {getLanguageLabel(lang)}
-                        {lang === defaultLanguage ? (
-                          <span className="ml-1 text-[10px] opacity-60">(default)</span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => removeLanguage(lang)}
-                            className="ml-1 hover:text-destructive"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="primaryColor"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              Primary Brand Color <span className="text-destructive">*</span>
+                            </FormLabel>
+                            <FormControl>
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="color"
+                                  value={field.value}
+                                  onChange={field.onChange}
+                                  className="h-10 w-10 cursor-pointer rounded-lg border border-border"
+                                />
+                                <Input
+                                  {...field}
+                                  className="w-32 rounded-xl font-mono"
+                                  placeholder="#10b981"
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
                         )}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Pre-Chat Form Fields */}
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <Label>Pre-Chat Form Fields</Label>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        Fields shown to users before they start chatting (optional)
-                      </p>
+                      />
+                      <FormField
+                        control={form.control}
+                        name="secondaryColor"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              Secondary Brand Color{" "}
+                              <span className="text-xs text-muted-foreground">(optional)</span>
+                            </FormLabel>
+                            <FormControl>
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="color"
+                                  value={field.value ?? ""}
+                                  onChange={field.onChange}
+                                  className="h-10 w-10 cursor-pointer rounded-lg border border-border"
+                                />
+                                <Input
+                                  {...field}
+                                  value={field.value ?? ""}
+                                  className="w-32 rounded-xl font-mono"
+                                  placeholder="#6366f1"
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
                     </div>
-                    {!showAddField && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowAddField(true)}
-                    className="rounded-xl"
-                      >
-                        <Plus className="mr-2 h-3 w-3" />
-                        Add Field
-                      </Button>
-                    )}
-                </div>
+                  </CardContent>
+                </>
+              )}
 
-                  {/* Existing fields */}
-                  {preChatFormFields.length > 0 && (
-                <div className="space-y-2">
-                      {preChatFormFields.map((field, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-4 py-3"
-                        >
-                          <div>
-                            <p className="text-sm font-medium text-foreground">{field.label}</p>
-                            <p className="text-xs text-muted-foreground">
-                              key:{" "}
-                              <span className="font-mono">{field.key}</span>
-                              {" · "}type: {field.type}
-                              {" · "}
-                              {field.required ? "required" : "optional"}
-                              {field.options && field.options.length > 0 &&
-                                ` · options: ${field.options.join(", ")}`}
-                            </p>
-                </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive"
-                            onClick={() => removePreChatField(index)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+              {/* ── Step 2: Agent Setup ─────────────────────────────────────── */}
+              {currentStep === 2 && (
+                <>
+                  <CardHeader>
+                    <CardTitle>Agent Setup</CardTitle>
+                    <CardDescription>
+                      Configure your AI agent&apos;s name and appearance
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="agentAlias"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Agent Alias <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="e.g. Maya, Aria, Nova"
+                              className="rounded-xl"
+                              maxLength={50}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            The name your AI assistant will use when greeting customers (2–50 characters)
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-                  {/* Add new field inline form */}
-                  {showAddField && (
-                    <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
-                      <p className="text-sm font-medium text-foreground">New Form Field</p>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label className="text-xs">
-                            Label <span className="text-destructive">*</span>
-                          </Label>
-                          <Input
-                            placeholder="e.g. Full Name"
-                            value={newField.label}
-                            onChange={(e) => setNewField({ ...newField, label: e.target.value })}
-                            className="h-9 rounded-xl"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs">
-                            Key <span className="text-destructive">*</span>
-                          </Label>
-                          <Input
-                            placeholder="e.g. fullName"
-                            value={newField.key}
-                            onChange={(e) =>
-                              setNewField({
-                                ...newField,
-                                key: e.target.value.replace(/\s/g, ""),
-                              })
-                            }
-                            className="h-9 rounded-xl font-mono"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs">Field Type</Label>
-                          <Select
-                            value={newField.type}
-                            onValueChange={(v) =>
-                              setNewField({
-                                ...newField,
-                                type: v as PreChatFormField["type"],
-                                options: [],
-                              })
-                            }
-                          >
-                            <SelectTrigger className="h-9 rounded-xl">
-                              <SelectValue />
-                            </SelectTrigger>
+                    <FormField
+                      control={form.control}
+                      name="agentProfileImageUrl"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Profile Image{" "}
+                            <span className="text-xs text-muted-foreground">(optional)</span>
+                          </FormLabel>
+                          <FormControl>
+                            <div className="flex items-center gap-5">
+                              <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-border bg-muted/50">
+                                {field.value ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={field.value}
+                                    alt="Agent"
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <Upload className="h-6 w-6 text-muted-foreground" />
+                                )}
+                              </div>
+                              <div className="flex-1">
+                                <Input
+                                  placeholder="https://example.com/avatar.png"
+                                  className="rounded-xl"
+                                  {...field}
+                                />
+                              </div>
+                            </div>
+                          </FormControl>
+                          <FormDescription>
+                            Enter a public image URL for your agent&apos;s avatar
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </CardContent>
+                </>
+              )}
+
+              {/* ── Step 3: Hours of Operation ──────────────────────────────── */}
+              {currentStep === 3 && (
+                <>
+                  <CardHeader>
+                    <CardTitle>Hours of Operation</CardTitle>
+                    <CardDescription>Set when your business is open and available</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <FormField
+                      control={form.control}
+                      name="timezone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Timezone <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger className="rounded-xl">
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
                             <SelectContent>
-                              {fieldTypeOptions.map((t) => (
-                                <SelectItem key={t} value={t}>
-                                  {t}
+                              {timezoneOptions.map((tz) => (
+                                <SelectItem key={tz.value} value={tz.value}>
+                                  {tz.label}
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
-                        </div>
-                        <div className="flex items-center gap-3 pt-5">
-                          <Switch
-                            checked={newField.required}
-                            onCheckedChange={(checked) =>
-                              setNewField({ ...newField, required: checked })
-                            }
-                          />
-                          <Label className="text-xs">Required field</Label>
-                        </div>
-                      </div>
-
-                      {/* Options — only for "select" type */}
-                      {newField.type === "select" && (
-                <div className="space-y-2">
-                          <Label className="text-xs">Select Options</Label>
-                          <div className="flex gap-2">
-                            <Input
-                              placeholder="Add option..."
-                              value={newFieldOption}
-                              onChange={(e) => setNewFieldOption(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault()
-                                  addFieldOption()
-                                }
-                              }}
-                              className="h-9 rounded-xl"
-                            />
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={addFieldOption}
-                              className="h-9 rounded-xl"
-                            >
-                              Add
-                            </Button>
-                          </div>
-                          {(newField.options ?? []).length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {(newField.options ?? []).map((opt) => (
-                                <span
-                                  key={opt}
-                                  className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs"
-                                >
-                                  {opt}
-                                  <button onClick={() => removeFieldOption(opt)}>
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                          <FormMessage />
+                        </FormItem>
                       )}
+                    />
 
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={addPreChatField}
-                          className="rounded-xl"
-                          disabled={!newField.key || !newField.label}
-                        >
-                          <Check className="mr-2 h-3 w-3" />
-                          Add Field
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setShowAddField(false)
-                            setNewField({
-                              key: "",
-                              label: "",
-                              type: "text",
-                              required: false,
-                              options: [],
-                            })
-                          }}
-                          className="rounded-xl"
-                        >
-                          Cancel
-                        </Button>
+                    <div className="space-y-2">
+                      <Label>
+                        Weekly Schedule <span className="text-destructive">*</span>
+                      </Label>
+                      <div className="overflow-hidden rounded-xl border border-border">
+                        <table className="w-full">
+                          <thead className="bg-muted/50">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Day</th>
+                              <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground">Open</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Opens At</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Closes At</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {schedule.map((day) => (
+                              <tr
+                                key={day.day}
+                                className={cn("bg-card transition-opacity", !day.isOpen && "opacity-50")}
+                              >
+                                <td className="px-4 py-3 text-sm font-medium capitalize text-foreground">
+                                  {day.day}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <Switch
+                                    checked={day.isOpen}
+                                    onCheckedChange={(checked) =>
+                                      updateScheduleDay(day.day, "isOpen", checked)
+                                    }
+                                  />
+                                </td>
+                                <td className="px-4 py-3">
+                                  <input
+                                    type="time"
+                                    value={day.start}
+                                    onChange={(e) =>
+                                      updateScheduleDay(day.day, "start", e.target.value)
+                                    }
+                                    disabled={!day.isOpen}
+                                    className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                                  />
+                                </td>
+                                <td className="px-4 py-3">
+                                  <input
+                                    type="time"
+                                    value={day.end}
+                                    onChange={(e) =>
+                                      updateScheduleDay(day.day, "end", e.target.value)
+                                    }
+                                    disabled={!day.isOpen}
+                                    className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
-                  )}
-                </div>
-              </CardContent>
-            </>
-          )}
+                  </CardContent>
+                </>
+              )}
 
-          {/* ── Step 5: Knowledge Base ──────────────────────────────────────────── */}
-          {currentStep === 5 && (
-            <>
-              <CardHeader>
-                <CardTitle>Knowledge Base</CardTitle>
-                <CardDescription>
-                  Add URLs and documents for your AI to learn from
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Website URLs */}
-                <div className="space-y-3">
-                  <div>
-                    <Label>Website URLs</Label>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Add pages your AI should reference (e.g. About, FAQs, Services)
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="https://yoursite.com/faq"
-                      value={newUrl}
-                      onChange={(e) => setNewUrl(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault()
-                          addUrl()
-                        }
-                      }}
-                      className="rounded-xl"
-                    />
-                    <Button variant="outline" onClick={addUrl} className="flex-shrink-0 rounded-xl">
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  {knowledgeBaseUrls.length > 0 && (
+              {/* ── Step 4: Language & Pre-Chat ─────────────────────────────── */}
+              {currentStep === 4 && (
+                <>
+                  <CardHeader>
+                    <CardTitle>Language & Pre-Chat Form</CardTitle>
+                    <CardDescription>
+                      Set language preferences and optional fields shown before a chat starts
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <FormField
+                        control={form.control}
+                        name="defaultLanguage"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              Default Language <span className="text-destructive">*</span>
+                            </FormLabel>
+                            <Select
+                              onValueChange={(v) => {
+                                field.onChange(v)
+                                if (!supportedLanguages.includes(v)) {
+                                  setSupportedLanguages([v, ...supportedLanguages])
+                                }
+                              }}
+                              value={field.value}
+                            >
+                              <FormControl>
+                                <SelectTrigger className="rounded-xl">
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {languageOptions.map((l) => (
+                                  <SelectItem key={l.value} value={l.value}>
+                                    {l.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="space-y-2">
+                        <Label>Add Supported Language</Label>
+                        <Select onValueChange={addLanguage}>
+                          <SelectTrigger className="rounded-xl">
+                            <SelectValue placeholder="Add language..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {languageOptions
+                              .filter((l) => !supportedLanguages.includes(l.value))
+                              .map((l) => (
+                                <SelectItem key={l.value} value={l.value}>
+                                  {l.label}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    {/* Supported languages tag list */}
                     <div className="space-y-2">
-                      {knowledgeBaseUrls.map((url, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-3 py-2"
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <Globe className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                            <span className="truncate text-sm text-foreground">{url}</span>
-                        </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 flex-shrink-0 text-destructive"
-                            onClick={() =>
-                              setKnowledgeBaseUrls(knowledgeBaseUrls.filter((_, idx) => idx !== i))
-                            }
+                      <Label>Supported Languages</Label>
+                      <div className="flex min-h-12 flex-wrap gap-2 rounded-xl border border-border p-3">
+                        {supportedLanguages.map((lang) => (
+                          <span
+                            key={lang}
+                            className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
                           >
-                            <X className="h-3 w-3" />
-                          </Button>
+                            {getLanguageLabel(lang)}
+                            {lang === form.getValues("defaultLanguage") ? (
+                              <span className="ml-1 text-[10px] opacity-60">(default)</span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => removeLanguage(lang)}
+                                className="ml-1 hover:text-destructive"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Pre-Chat Form Fields */}
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <Label>Pre-Chat Form Fields</Label>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Fields shown to users before they start chatting (optional)
+                          </p>
                         </div>
-                      ))}
-                          </div>
+                        {!showAddField && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowAddField(true)}
+                            className="rounded-xl"
+                          >
+                            <Plus className="mr-2 h-3 w-3" />
+                            Add Field
+                          </Button>
                         )}
                       </div>
 
-                {/* Documents */}
-                <div className="space-y-3">
-                  <div>
-                    <Label>Documents</Label>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Add document names or paths (e.g. hotel-guide.pdf)
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <FileText className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        placeholder="document-name.pdf"
-                        value={newDocument}
-                        onChange={(e) => setNewDocument(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault()
-                            addDocument()
-                          }
-                        }}
-                        className="rounded-xl pl-10"
-                      />
-                    </div>
-                    <Button
-                      variant="outline"
-                      onClick={addDocument}
-                      className="flex-shrink-0 rounded-xl"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  {knowledgeBaseDocuments.length > 0 && (
-                    <div className="space-y-2">
-                      {knowledgeBaseDocuments.map((doc, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-3 py-2"
-                        >
-                          <div className="flex items-center gap-2">
-                            <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                            <span className="text-sm text-foreground">{doc}</span>
+                      {preChatFormFields.length > 0 && (
+                        <div className="space-y-2">
+                          {preChatFormFields.map((field, index) => (
+                            <div
+                              key={index}
+                              className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-4 py-3"
+                            >
+                              <div>
+                                <p className="text-sm font-medium text-foreground">{field.label}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  key:{" "}
+                                  <span className="font-mono">{field.key}</span>
+                                  {" · "}type: {field.type}
+                                  {" · "}
+                                  {field.required ? "required" : "optional"}
+                                  {field.options && field.options.length > 0 &&
+                                    ` · options: ${field.options.join(", ")}`}
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive"
+                                onClick={() => removePreChatField(index)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {showAddField && (
+                        <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+                          <p className="text-sm font-medium text-foreground">New Form Field</p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">
+                                Label <span className="text-destructive">*</span>
+                              </Label>
+                              <Input
+                                placeholder="e.g. Full Name"
+                                value={newField.label}
+                                onChange={(e) =>
+                                  setNewField({ ...newField, label: e.target.value })
+                                }
+                                className="h-9 rounded-xl"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">
+                                Key <span className="text-destructive">*</span>
+                              </Label>
+                              <Input
+                                placeholder="e.g. fullName"
+                                value={newField.key}
+                                onChange={(e) =>
+                                  setNewField({
+                                    ...newField,
+                                    key: e.target.value.replace(/\s/g, ""),
+                                  })
+                                }
+                                className="h-9 rounded-xl font-mono"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs">Field Type</Label>
+                              <Select
+                                value={newField.type}
+                                onValueChange={(v) =>
+                                  setNewField({
+                                    ...newField,
+                                    type: v as PreChatFormField["type"],
+                                    options: [],
+                                  })
+                                }
+                              >
+                                <SelectTrigger className="h-9 rounded-xl">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {fieldTypeOptions.map((t) => (
+                                    <SelectItem key={t} value={t}>
+                                      {t}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="flex items-center gap-3 pt-5">
+                              <Switch
+                                checked={newField.required}
+                                onCheckedChange={(checked) =>
+                                  setNewField({ ...newField, required: checked })
+                                }
+                              />
+                              <Label className="text-xs">Required field</Label>
+                            </div>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 flex-shrink-0 text-destructive"
-                            onClick={() =>
-                              setKnowledgeBaseDocuments(
-                                knowledgeBaseDocuments.filter((_, idx) => idx !== i)
-                              )
+
+                          {newField.type === "select" && (
+                            <div className="space-y-2">
+                              <Label className="text-xs">Select Options</Label>
+                              <div className="flex gap-2">
+                                <Input
+                                  placeholder="Add option..."
+                                  value={newFieldOption}
+                                  onChange={(e) => setNewFieldOption(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault()
+                                      addFieldOption()
+                                    }
+                                  }}
+                                  className="h-9 rounded-xl"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={addFieldOption}
+                                  className="h-9 rounded-xl"
+                                >
+                                  Add
+                                </Button>
+                              </div>
+                              {(newField.options ?? []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(newField.options ?? []).map((opt) => (
+                                    <span
+                                      key={opt}
+                                      className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs"
+                                    >
+                                      {opt}
+                                      <button
+                                        type="button"
+                                        onClick={() => removeFieldOption(opt)}
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={addPreChatField}
+                              className="rounded-xl"
+                              disabled={!newField.key || !newField.label}
+                            >
+                              <Check className="mr-2 h-3 w-3" />
+                              Add Field
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setShowAddField(false)
+                                setNewField({
+                                  key: "",
+                                  label: "",
+                                  type: "text",
+                                  required: false,
+                                  options: [],
+                                })
+                              }}
+                              className="rounded-xl"
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </>
+              )}
+
+              {/* ── Step 5: Knowledge Base ───────────────────────────────────── */}
+              {currentStep === 5 && (
+                <>
+                  <CardHeader>
+                    <CardTitle>Knowledge Base</CardTitle>
+                    <CardDescription>
+                      Add URLs and documents for your AI to learn from
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    {/* Website URLs */}
+                    <div className="space-y-3">
+                      <div>
+                        <Label>Website URLs</Label>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Add pages your AI should reference (e.g. About, FAQs, Services)
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="https://yoursite.com/faq"
+                          value={newUrl}
+                          onChange={(e) => setNewUrl(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault()
+                              addUrl()
                             }
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
+                          }}
+                          className="rounded-xl"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={addUrl}
+                          className="flex-shrink-0 rounded-xl"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {knowledgeBaseUrls.length > 0 && (
+                        <div className="space-y-2">
+                          {knowledgeBaseUrls.map((url, i) => (
+                            <div
+                              key={i}
+                              className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-3 py-2"
+                            >
+                              <div className="flex min-w-0 items-center gap-2">
+                                <Globe className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                <span className="truncate text-sm text-foreground">{url}</span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 flex-shrink-0 text-destructive"
+                                onClick={() =>
+                                  setKnowledgeBaseUrls(
+                                    knowledgeBaseUrls.filter((_, idx) => idx !== i)
+                                  )
+                                }
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
+
+                    {/* Documents */}
+                    <div className="space-y-3">
+                      <div>
+                        <Label>Documents</Label>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Add document names or paths (e.g. hotel-guide.pdf)
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <FileText className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            placeholder="document-name.pdf"
+                            value={newDocument}
+                            onChange={(e) => setNewDocument(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault()
+                                addDocument()
+                              }
+                            }}
+                            className="rounded-xl pl-10"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={addDocument}
+                          className="flex-shrink-0 rounded-xl"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {knowledgeBaseDocuments.length > 0 && (
+                        <div className="space-y-2">
+                          {knowledgeBaseDocuments.map((doc, i) => (
+                            <div
+                              key={i}
+                              className="flex items-center justify-between rounded-xl border border-border bg-muted/30 px-3 py-2"
+                            >
+                              <div className="flex items-center gap-2">
+                                <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                                <span className="text-sm text-foreground">{doc}</span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 flex-shrink-0 text-destructive"
+                                onClick={() =>
+                                  setKnowledgeBaseDocuments(
+                                    knowledgeBaseDocuments.filter((_, idx) => idx !== i)
+                                  )
+                                }
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
+                  </CardContent>
+                </>
+              )}
+
+              {/* ── Navigation ─────────────────────────────────────────────── */}
+              <div className="flex flex-col gap-3 border-t border-border p-6">
+                {submitError && (
+                  <div className="rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {submitError}
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCurrentStep((s) => Math.max(1, s - 1))}
+                    disabled={currentStep === 1 || isSubmitting}
+                    className="rounded-xl"
+                  >
+                    Previous
+                  </Button>
+                  {currentStep < 5 ? (
+                    <Button
+                      type="button"
+                      onClick={handleNext}
+                      disabled={isSubmitting}
+                      className="rounded-xl"
+                    >
+                      Continue
+                    </Button>
+                  ) : (
+                    <Button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="rounded-xl"
+                    >
+                      {isSubmitting
+                        ? editingId
+                          ? "Updating…"
+                          : "Creating…"
+                        : editingId
+                          ? "Update Onboarding"
+                          : "Complete Setup"}
+                    </Button>
                   )}
                 </div>
-              </CardContent>
-            </>
-          )}
-
-          {/* Navigation */}
-          <div className="flex flex-col gap-3 border-t border-border p-6">
-            {/* API error banner */}
-            {apiError && (
-              <div className="rounded-xl bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                {apiError}
               </div>
-            )}
-            <div className="flex justify-between">
-            <Button
-              variant="outline"
-              onClick={() => setCurrentStep(Math.max(1, currentStep - 1))}
-                disabled={currentStep === 1 || isSubmitting}
-              className="rounded-xl"
-            >
-              Previous
-            </Button>
-              <Button
-                onClick={
-                  currentStep === 5
-                    ? handleFormSubmit
-                    : () => setCurrentStep(Math.min(5, currentStep + 1))
-                }
-                disabled={isSubmitting}
-                className="rounded-xl"
-              >
-                {currentStep === 5
-                  ? isSubmitting
-                    ? editingId
-                      ? "Updating…"
-                      : "Creating…"
-                    : editingId
-                    ? "Update Onboarding"
-                    : "Complete Setup"
-                  : "Continue"}
-            </Button>
-            </div>
-          </div>
-        </Card>
+            </Card>
+          </form>
+        </Form>
       </div>
     </AdminLayout>
   )
 }
 
-// ─── Exported page ────────────────────────────────────────────────────────────
-// Wraps OnboardingPageInner in a Suspense boundary, which is required by
-// Next.js App Router whenever a client component calls useSearchParams().
+// ─── Exported page ─────────────────────────────────────────────────────────────
 
 export default function OnboardingPage() {
   return (

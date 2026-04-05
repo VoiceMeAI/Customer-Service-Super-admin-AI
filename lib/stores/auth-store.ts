@@ -27,9 +27,11 @@ interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  isHydrated: boolean;
   setAuth: (user: User, token: string) => void;
   clearAuth: () => void;
   initialize: () => void;
+  setHydrated: () => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -51,6 +53,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       isAuthenticated: false,
+      isHydrated: false,
 
       setAuth: (user, token) => {
         set({ user, token, isAuthenticated: true });
@@ -66,6 +69,8 @@ export const useAuthStore = create<AuthState>()(
         const { token } = useAuthStore.getState();
         if (token) setAuthToken(token);
       },
+
+      setHydrated: () => set({ isHydrated: true }),
     }),
     {
       name: 'auth-storage',
@@ -75,6 +80,8 @@ export const useAuthStore = create<AuthState>()(
       // Node.js — so we don't need a typeof window guard here.
       storage: createJSONStorage(() => localStorage),
       // Only persist what we need — token, user, and auth flag.
+      // isHydrated is intentionally excluded: it always starts false and is
+      // set to true by AuthInitializer after rehydrate() completes.
       partialize: (state) => ({
         token: state.token,
         user: state.user,

@@ -18,9 +18,18 @@ import { useAuthStore } from "@/lib/stores/auth-store";
  */
 export function AuthInitializer() {
   useEffect(() => {
-    // Trigger client-side hydration now that localStorage is available.
-    // This restores the previously logged-in user and token from storage.
+    // 1. Register onFinishHydration BEFORE calling rehydrate() so the callback
+    //    is guaranteed to fire whether rehydrate() completes synchronously
+    //    (localStorage, the common case) or asynchronously (async storage).
+    const unsubscribe = useAuthStore.persist.onFinishHydration(() => {
+      useAuthStore.getState().setHydrated();
+    });
+
+    // 2. Trigger client-side hydration now that localStorage is available.
+    //    This restores the previously logged-in user and token from storage.
     useAuthStore.persist.rehydrate();
+
+    return unsubscribe;
   }, []);
 
   // Renders nothing — this component only runs a side-effect.

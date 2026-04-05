@@ -1,48 +1,40 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { login } from "@/lib/api/auth";
-import type { LoginPayload } from "@/lib/api/types";
+import { useRouter } from "next/navigation"
+import Link from "next/link"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useMutation } from "@tanstack/react-query"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form"
+import { login } from "@/lib/api/auth"
+import { loginSchema, type LoginFormValues } from "@/lib/validations/auth"
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [formData, setFormData] = useState<LoginPayload>({
-    emailOrUsername: "",
-    password: "",
-  });
+  const router = useRouter()
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+  const form = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { emailOrUsername: "", password: "" },
+  })
 
-    // Basic validation
-    if (!formData.emailOrUsername || !formData.password) {
-      setError("Please fill in all fields");
-      return;
-    }
+  const loginMutation = useMutation({
+    mutationFn: login,
+    onSuccess: () => router.push("/admin/dashboard"),
+  })
 
-    setIsLoading(true);
-
-    try {
-      // Call login API
-      await login(formData);
-
-      // Success! User is now logged in and redirected
-      router.push("/admin/dashboard");
-    } catch (err: any) {
-      // Handle error
-      setError(err.message || "Login failed. Please check your credentials and try again.");
-      setIsLoading(false);
-    }
-  };
+  const onSubmit = (values: LoginFormValues) => {
+    loginMutation.mutate(values)
+  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-muted/30 p-4">
@@ -62,57 +54,64 @@ export default function LoginPage() {
         </CardHeader>
 
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Error Message */}
-            {error && (
-              <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive border border-destructive/20">
-                {error}
-              </div>
-            )}
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              {/* API error */}
+              {loginMutation.error && (
+                <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+                  {loginMutation.error.message || "Login failed. Please check your credentials and try again."}
+                </div>
+              )}
 
-            {/* Email or Username Field */}
-            <div className="space-y-2">
-              <Label htmlFor="emailOrUsername">
-                Email or Username <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="emailOrUsername"
-                type="text"
-                placeholder="Enter your email or username"
-                value={formData.emailOrUsername}
-                onChange={(e) => setFormData({ ...formData, emailOrUsername: e.target.value })}
-                className="rounded-xl"
-                required
-                autoComplete="username"
+              <FormField
+                control={form.control}
+                name="emailOrUsername"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email or Username <span className="text-destructive">*</span></FormLabel>
+                    <FormControl>
+                      <Input
+                        type="text"
+                        placeholder="Enter your email or username"
+                        className="rounded-xl"
+                        autoComplete="username"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
 
-            {/* Password Field */}
-            <div className="space-y-2">
-              <Label htmlFor="password">
-                Password <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="rounded-xl"
-                required
-                autoComplete="current-password"
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Password <span className="text-destructive">*</span></FormLabel>
+                    <FormControl>
+                      <Input
+                        type="password"
+                        placeholder="Enter your password"
+                        className="rounded-xl"
+                        autoComplete="current-password"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
               />
-            </div>
 
-            {/* Submit Button */}
-            <Button
-              type="submit"
-              className="w-full rounded-xl"
-              disabled={isLoading}
-            >
-              {isLoading ? "Signing in..." : "Sign in"}
-            </Button>
-          </form>
+              <Button
+                type="submit"
+                className="w-full rounded-xl"
+                disabled={loginMutation.isPending}
+              >
+                {loginMutation.isPending ? "Signing in..." : "Sign in"}
+              </Button>
+            </form>
+          </Form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Don't have an account?{" "}
@@ -123,5 +122,5 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

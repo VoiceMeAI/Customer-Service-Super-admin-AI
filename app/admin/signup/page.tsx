@@ -1,107 +1,77 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
-import { register } from "@/lib/api/auth";
-import type { RegisterPayload } from "@/lib/api/types";
+import { useState } from "react"
+import { useRouter } from "next/navigation"
+import Link from "next/link"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useMutation } from "@tanstack/react-query"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+  FormDescription,
+} from "@/components/ui/form"
+import { cn } from "@/lib/utils"
+import { register } from "@/lib/api/auth"
+import { signupSchema, SIGNUP_DEFAULTS, type SignupFormValues } from "@/lib/validations/auth"
 
 const steps = [
   { id: 1, name: "Personal Info" },
   { id: 2, name: "Contact Details" },
   { id: 3, name: "Account Setup" },
-];
+]
+
+// Fields that belong to each step — used for per-step trigger()
+const STEP_FIELDS: Record<number, (keyof SignupFormValues)[]> = {
+  1: ["username", "firstName", "lastName"],
+  2: ["email", "phone"],
+  3: ["password", "confirmPassword"],
+}
 
 export default function SignupPage() {
-  const router = useRouter();
-  const [currentStep, setCurrentStep] = useState(1);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [formData, setFormData] = useState<RegisterPayload & { confirmPassword: string }>({
-    username: "",
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    password: "",
-    role: "",
-    confirmPassword: "",
-  });
+  const router = useRouter()
+  const [currentStep, setCurrentStep] = useState(1)
 
-  const handleNext = () => {
-    // Basic validation before moving to next step
-    if (currentStep === 1) {
-      if (!formData.username || !formData.firstName || !formData.lastName) {
-        setError("Please fill in all required fields");
-        return;
-      }
-    } else if (currentStep === 2) {
-      if (!formData.email || !formData.phone) {
-        setError("Please fill in all required fields");
-        return;
-      }
-      // Basic email validation
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(formData.email)) {
-        setError("Please enter a valid email address");
-        return;
-      }
-    }
-    setError(null);
-    if (currentStep < 3) setCurrentStep(currentStep + 1);
-  };
+  const form = useForm<SignupFormValues>({
+    resolver: zodResolver(signupSchema),
+    defaultValues: SIGNUP_DEFAULTS,
+    mode: "onTouched",
+  })
+
+  const registerMutation = useMutation({
+    mutationFn: (values: SignupFormValues) =>
+      register({
+        username: values.username,
+        firstName: values.firstName,
+        lastName: values.lastName,
+        email: values.email,
+        phone: values.phone,
+        password: values.password,
+        ...(values.role ? { role: values.role } : {}),
+      }),
+    onSuccess: () => router.push("/admin/dashboard"),
+  })
+
+  const handleNext = async () => {
+    const valid = await form.trigger(STEP_FIELDS[currentStep])
+    if (valid) setCurrentStep((s) => Math.min(3, s + 1))
+  }
 
   const handleBack = () => {
-    setError(null);
-    if (currentStep > 1) setCurrentStep(currentStep - 1);
-  };
+    setCurrentStep((s) => Math.max(1, s - 1))
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    // Validation
-    if (formData.password !== formData.confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
-
-    if (formData.password.length < 6) {
-      setError("Password must be at least 6 characters");
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      // Prepare payload (exclude confirmPassword)
-      const payload: RegisterPayload = {
-        username: formData.username,
-        firstName: formData.firstName,
-        lastName: formData.lastName,
-        email: formData.email,
-        phone: formData.phone,
-        password: formData.password,
-        ...(formData.role && { role: formData.role }), // Only include role if provided
-      };
-
-      // Call register API
-      await register(payload);
-
-      // Success! User is now logged in and redirected
-      router.push("/admin/dashboard");
-    } catch (err: any) {
-      // Handle error
-      setError(err.message || "Registration failed. Please try again.");
-      setIsLoading(false);
-    }
-  };
+  const onSubmit = (values: SignupFormValues) => {
+    registerMutation.mutate(values)
+  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-muted/30 p-4">
@@ -127,7 +97,9 @@ export default function SignupPage() {
                   <div
                     className={cn(
                       "flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold transition-colors",
-                      currentStep >= step.id ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                      currentStep >= step.id
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
                     )}
                   >
                     {step.id}
@@ -148,173 +120,191 @@ export default function SignupPage() {
         </div>
 
         <CardContent className="space-y-4">
-          {/* Error Message */}
-          {error && (
-            <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive border border-destructive/20">
-              {error}
+          {/* API error */}
+          {registerMutation.error && (
+            <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+              {registerMutation.error.message || "Registration failed. Please try again."}
             </div>
           )}
 
-          {/* Step 1: Personal Information */}
-          {currentStep === 1 && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="username">
-                  Username <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="username"
-                  placeholder="Choose a username"
-                  value={formData.username}
-                  onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                  className="rounded-xl"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="firstName">
-                  First Name <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="firstName"
-                  placeholder="Enter your first name"
-                  value={formData.firstName}
-                  onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                  className="rounded-xl"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="lastName">
-                  Last Name <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="lastName"
-                  placeholder="Enter your last name"
-                  value={formData.lastName}
-                  onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                  className="rounded-xl"
-                  required
-                />
-              </div>
-            </div>
-          )}
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)}>
+              {/* ── Step 1: Personal Information ── */}
+              {currentStep === 1 && (
+                <div className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="username"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Username <span className="text-destructive">*</span></FormLabel>
+                        <FormControl>
+                          <Input placeholder="Choose a username" className="rounded-xl" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="firstName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>First Name <span className="text-destructive">*</span></FormLabel>
+                        <FormControl>
+                          <Input placeholder="Enter your first name" className="rounded-xl" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="lastName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Last Name <span className="text-destructive">*</span></FormLabel>
+                        <FormControl>
+                          <Input placeholder="Enter your last name" className="rounded-xl" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
 
-          {/* Step 2: Contact Details */}
-          {currentStep === 2 && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">
-                  Email Address <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="rounded-xl"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">
-                  Phone Number <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  placeholder="+1234567890"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  className="rounded-xl"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="role">Role (Optional)</Label>
-                <Select
-                  value={formData.role}
-                  onValueChange={(value) => setFormData({ ...formData, role: value })}
-                >
-                  <SelectTrigger className="rounded-xl">
-                    <SelectValue placeholder="Select your role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="manager">Manager</SelectItem>
-                    <SelectItem value="staff">Staff</SelectItem>
-                    <SelectItem value="user">User</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          )}
+              {/* ── Step 2: Contact Details ── */}
+              {currentStep === 2 && (
+                <div className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email Address <span className="text-destructive">*</span></FormLabel>
+                        <FormControl>
+                          <Input type="email" placeholder="you@example.com" className="rounded-xl" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Phone Number <span className="text-destructive">*</span></FormLabel>
+                        <FormControl>
+                          <Input type="tel" placeholder="+1234567890" className="rounded-xl" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="role"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Role (Optional)</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger className="rounded-xl">
+                              <SelectValue placeholder="Select your role" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="admin">Admin</SelectItem>
+                            <SelectItem value="manager">Manager</SelectItem>
+                            <SelectItem value="staff">Staff</SelectItem>
+                            <SelectItem value="user">User</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
 
-          {/* Step 3: Account Setup */}
-          {currentStep === 3 && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="password">
-                  Password <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Minimum 6 characters"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  className="rounded-xl"
-                  required
-                  minLength={6}
-                />
-                <p className="text-xs text-muted-foreground">Password must be at least 6 characters</p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirmPassword">
-                  Confirm Password <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  placeholder="Confirm your password"
-                  value={formData.confirmPassword}
-                  onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                  className="rounded-xl"
-                  required
-                  minLength={6}
-                />
-              </div>
-            </div>
-          )}
+              {/* ── Step 3: Account Setup ── */}
+              {currentStep === 3 && (
+                <div className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Password <span className="text-destructive">*</span></FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder="Minimum 6 characters"
+                            className="rounded-xl"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>Password must be at least 6 characters</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="confirmPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Confirm Password <span className="text-destructive">*</span></FormLabel>
+                        <FormControl>
+                          <Input
+                            type="password"
+                            placeholder="Confirm your password"
+                            className="rounded-xl"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
 
-          <div className="flex gap-3 pt-4">
-            {currentStep > 1 && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleBack}
-                className="flex-1 rounded-xl bg-transparent"
-                disabled={isLoading}
-              >
-                Back
-              </Button>
-            )}
-            {currentStep < 3 ? (
-              <Button type="button" onClick={handleNext} className="flex-1 rounded-xl" disabled={isLoading}>
-                Continue
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                onClick={handleSubmit}
-                className="flex-1 rounded-xl"
-                disabled={isLoading}
-              >
-                {isLoading ? "Creating Account..." : "Create Account"}
-              </Button>
-            )}
-          </div>
+              <div className="flex gap-3 pt-6">
+                {currentStep > 1 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleBack}
+                    className="flex-1 rounded-xl bg-transparent"
+                    disabled={registerMutation.isPending}
+                  >
+                    Back
+                  </Button>
+                )}
+                {currentStep < 3 ? (
+                  <Button
+                    type="button"
+                    onClick={handleNext}
+                    className="flex-1 rounded-xl"
+                    disabled={registerMutation.isPending}
+                  >
+                    Continue
+                  </Button>
+                ) : (
+                  <Button
+                    type="submit"
+                    className="flex-1 rounded-xl"
+                    disabled={registerMutation.isPending}
+                  >
+                    {registerMutation.isPending ? "Creating Account..." : "Create Account"}
+                  </Button>
+                )}
+              </div>
+            </form>
+          </Form>
 
           <p className="text-center text-sm text-muted-foreground">
             Already have an account?{" "}
@@ -325,5 +315,5 @@ export default function SignupPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

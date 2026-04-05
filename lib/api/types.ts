@@ -226,3 +226,254 @@ export type GetAllOnboardingsResult = {
  *    recursively.
  */
 export type GetAllOnboardingsApiResponse = Record<string, unknown>;
+
+// ============================================================================
+// FAQ TYPES
+// ============================================================================
+
+/**
+ * FaqPayload - Plain (unencrypted) payload for create / update FAQ
+ *
+ * Matches the backend schema exactly:
+ *   required: question, answer
+ *   optional: companyId, category, tags, sortOrder, isPublished, isActive
+ *
+ * The axios request interceptor automatically encrypts this to:
+ *   { "textData": "AES-encrypted-string" }
+ */
+export type FaqPayload = {
+  question: string;           // minLength: 3, maxLength: 500
+  answer: string;             // minLength: 3
+  companyId?: string | null;
+  category?: string | null;   // maxLength: 120
+  tags?: string[];
+  sortOrder?: number;         // integer, minimum: 0
+  isPublished?: boolean;
+  isActive?: boolean;
+};
+
+/**
+ * FaqItem - What the backend returns for a single FAQ record
+ * Includes the payload fields plus server-generated metadata
+ */
+export type FaqItem = FaqPayload & {
+  _id?: string;
+  id?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+/**
+ * FaqListPagination - Pagination metadata returned by the backend
+ */
+export type FaqListPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+/**
+ * GetAllFaqsResult - Normalised return value from getFaqs()
+ */
+export type GetAllFaqsResult = {
+  items: FaqItem[];
+  pagination: FaqListPagination;
+};
+
+// ============================================================================
+// SERVICE TYPES
+// ============================================================================
+
+/**
+ * ServiceSla - SLA configuration for a service.
+ */
+export type ServiceSla = {
+  firstResponseMins?: number;  // integer, minimum: 0
+  resolutionMins?: number;     // integer, minimum: 0
+};
+
+/**
+ * ServiceChannel - Allowed channel values for a service.
+ */
+export type ServiceChannel = "chat" | "email" | "voice";
+
+/**
+ * ServicePayload - Plain (unencrypted) payload for create / update service
+ *
+ * Matches the backend schema exactly (POST /api/widget/services/create):
+ *   required: name
+ *   optional: description, companyId, category, tags, sortOrder, isPublished,
+ *            isActive, sla, channels, metadata
+ *
+ * The axios request interceptor automatically encrypts this to:
+ *   { "textData": "AES-encrypted-string" }
+ */
+export type ServicePayload = {
+  name: string;                // required, minLength: 2, maxLength: 200
+  description?: string | null;
+  companyId?: string | null;
+  category?: string | null;    // maxLength: 120
+  tags?: string[];
+  sortOrder?: number;          // integer, minimum: 0
+  isPublished?: boolean;
+  isActive?: boolean;
+  sla?: ServiceSla | null;
+  channels?: ServiceChannel[];
+  metadata?: Record<string, unknown> | null;
+};
+
+/**
+ * ServiceItem - What the backend returns for a single service record.
+ * Includes the payload fields plus server-generated metadata.
+ */
+export type ServiceItem = ServicePayload & {
+  _id?: string;
+  id?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+/**
+ * ServiceListPagination - Pagination metadata returned by GET /api/widget/services/all
+ */
+export type ServiceListPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+/**
+ * GetAllServicesResult - Normalised return value from getServices()
+ */
+export type GetAllServicesResult = {
+  items: ServiceItem[];
+  pagination: ServiceListPagination;
+};
+
+/**
+ * ReorderServicesPayload - Payload for PATCH /api/widget/services/reorder
+ * Sends the new ordered list of service IDs.
+ */
+export type ReorderServicesPayload = {
+  serviceIds: string[];
+};
+
+// ============================================================================
+// STAFF TYPES
+// ============================================================================
+
+/**
+ * StaffStatus - Possible status values for a staff member.
+ * Matches the enum defined in POST /api/widget/staff/create
+ */
+export type StaffStatus = "invited" | "active" | "suspended";
+
+/**
+ * StaffRole - A role object returned by GET /api/widget/staff/roles/all
+ */
+export type StaffRole = {
+  _id?: string;
+  id?: string;
+  name: string;
+  description?: string;
+  permissions?: string[];
+};
+
+/**
+ * StaffPermission - A permission object returned by GET /api/widget/staff/permissions/all
+ */
+export type StaffPermission = {
+  _id?: string;
+  id?: string;
+  name: string;
+  description?: string;
+};
+
+/**
+ * StaffPayload - Plain (unencrypted) payload for POST /api/widget/staff/create
+ *
+ * Required: firstName (min 2, max 100), lastName (min 2, max 100), email
+ * The axios request interceptor automatically encrypts this to:
+ *   { "textData": "AES-encrypted-string" }
+ * Note: additionalProperties is false on the backend — only send these fields.
+ */
+export type StaffPayload = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  companyId?: string | null;
+  phone?: string | null;
+  roles?: string[];
+  status?: StaffStatus;
+  isActive?: boolean;
+  invitedBy?: string | null;
+  invitedAt?: string | null;
+};
+
+/**
+ * UpdateStaffPayload - Partial payload for PATCH /api/widget/staff/{id}
+ */
+export type UpdateStaffPayload = {
+  firstName?: string;
+  lastName?: string;
+  roles?: string[];
+  phone?: string | null;
+  isActive?: boolean;
+};
+
+/**
+ * UpdateStaffStatusPayload - Payload for PATCH /api/widget/staff/{id}/status
+ */
+export type UpdateStaffStatusPayload = {
+  status: StaffStatus;
+};
+
+/**
+ * UpdateStaffRolesPayload - Payload for PATCH /api/widget/staff/{id}/roles
+ */
+export type UpdateStaffRolesPayload = {
+  roles: string[];
+};
+
+/**
+ * StaffItem - What the backend returns for a single staff record.
+ */
+export type StaffItem = {
+  _id?: string;
+  id?: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  roles?: string[];
+  /** Convenience singular alias sometimes returned by the backend */
+  role?: string;
+  status?: StaffStatus;
+  companyId?: string;
+  phone?: string | null;
+  isActive?: boolean;
+  invitedBy?: string | null;
+  invitedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+/**
+ * StaffListPagination - Pagination metadata returned by GET /api/widget/staff/all
+ */
+export type StaffListPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+/**
+ * GetAllStaffResult - Normalised return value from getStaff()
+ */
+export type GetAllStaffResult = {
+  items: StaffItem[];
+  pagination: StaffListPagination;
+};
